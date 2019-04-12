@@ -1,4 +1,4 @@
-(ns binary-encoder.core
+(ns encode-binary.core
   (:import java.nio.ByteBuffer)
   (:import java.nio.charset.Charset)
   (:import java.nio.charset.StandardCharsets)

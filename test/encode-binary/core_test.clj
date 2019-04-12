@@ -1,7 +1,7 @@
-(ns binary-encoder.core-test
+(ns encode-binary.core-test
     (:require [clojure.test :refer :all]
               [clojure.spec.alpha :as s]
-              [binary-encoder.core :as bin]))
+              [encode-binary.core :as e]))
 
 (deftest addition
   (is (= 4 (+ 2 2)))
