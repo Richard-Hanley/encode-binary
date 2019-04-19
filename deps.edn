@@ -16,7 +16,7 @@
     org.clojure/test.check {:mvn/version "0.9.0"} 
     org.clojure/spec-alpha2 {
       :git/url "https://github.com/clojure/spec-alpha2.git" 
-      :sha "939e15ebf490115ee44b0e4e1f76a84a46893004"
+      :sha "c01c6aee1d048591a19bb71c3aa0c3172011ec2e"
     }
   }
 }
