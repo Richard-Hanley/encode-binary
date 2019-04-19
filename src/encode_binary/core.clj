@@ -40,6 +40,20 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Binary Collections
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn indexed-binary [index binary-coll]
+  (with-meta binary-coll
+             (assoc (meta binary-coll) ::index index)))
+
+(defn current-index [binary-coll]
+  (or (::index (meta binary-coll)) 0))
+
+(defn split-binary [size bin]
+  (let [[bin rem] (split-at size bin)]
+    [bin (if (some? rem)
+           (with-meta rem
+                    (update (meta bin) ::index (fnil + 0) size)))]))
+  
 (defprotocol BinaryCollection
   (flatten [this]))
 
@@ -52,6 +66,19 @@
 
 (defn binary-coll-key-order [bin]
   (or (get (meta bin) ::key-order) (keys bin)))
+
+(defn alignment-padding [align-to position]
+  (let [bytes-over (mod position align-to)]
+    (if (pos? bytes-over)
+      (- align-to bytes-over)
+      0)))
+
+(defn trim-to-alignment [align-to binary-coll]
+  (let [bytes-off (alignment-padding align-to 
+                                     (current-index binary-coll))]
+    (with-meta (drop bytes-off binary-coll)
+               (update (meta binary-coll) ::index (fnil #(+ bytes-off %) 0)))))
+
 
 (defprotocol Binary
   :extend-via-metadata true
@@ -78,12 +105,6 @@
   Binary
   (alignment* [_] 1)
   (sizeof* [_] 1))
-
-(defn alignment-padding [align-to position]
-  (let [bytes-over (mod position align-to)]
-    (if (pos? bytes-over)
-      (- align-to bytes-over)
-      0)))
 
 (extend-type clojure.lang.Sequential
   BinaryCollection
@@ -145,7 +166,8 @@
   (encode* (specize codec) data))
 
 (defn decode [codec binary-seq]
-  (decode* (specize codec) binary-seq))
+  (let [c (specize codec)]
+    (decode* c (trim-to-alignment (alignment* c) binary-seq))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;Defining Primitive Codecs
@@ -182,7 +204,7 @@
 
 (defn get-prim [get-buffer size order align-to]
   (fn [_ binary-seq]
-    (let [[prim remaining] (split-at size binary-seq)
+    (let [[prim remaining] (split-binary size binary-seq)
           bytes (.order (ByteBuffer/wrap (byte-array prim))
                         (get order-map order default-order))]
       [(get-buffer bytes) remaining])))
