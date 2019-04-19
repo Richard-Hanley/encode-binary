@@ -48,6 +48,7 @@
 
 
 
+
 (testing "primitive specs"
   (testing "signed"
     (testing "zero checking"
@@ -110,6 +111,87 @@
       (is (s/invalid? (s/conform :little/int32 1.02)))
       (is (s/invalid? (s/conform :little/int64 1.02))))))
 
+(testing "primitive codec alignment"
+  (testing "codec alignment"
+    (testing "little endian"
+      (is (= 1 (e/alignment :little/int8)))
+      (is (= 1 (e/alignment :little/int16)))
+      (is (= 1 (e/alignment :little/int32)))
+      (is (= 1 (e/alignment :little/int64)))
+      (is (= 1 (e/alignment :little/uint8)))
+      (is (= 1 (e/alignment :little/uint16)))
+      (is (= 1 (e/alignment :little/uint32)))
+      (is (= 1 (e/alignment :little/float)))
+      (is (= 1 (e/alignment :little/double))))
+    (testing "big endian"
+      (is (= 1 (e/alignment :big/int8)))
+      (is (= 1 (e/alignment :big/int16)))
+      (is (= 1 (e/alignment :big/int32)))
+      (is (= 1 (e/alignment :big/int64)))
+      (is (= 1 (e/alignment :big/uint8)))
+      (is (= 1 (e/alignment :big/uint16)))
+      (is (= 1 (e/alignment :big/uint32)))
+      (is (= 1 (e/alignment :big/float)))
+      (is (= 1 (e/alignment :big/double))))
+    (testing "word aligned"
+      (is (= 1 (e/alignment :aligned/int8)))
+      (is (= 2 (e/alignment :aligned/int16)))
+      (is (= 4 (e/alignment :aligned/int32)))
+      (is (= 4 (e/alignment :aligned/int64)))
+      (is (= 1 (e/alignment :aligned/uint8)))
+      (is (= 2 (e/alignment :aligned/uint16)))
+      (is (= 4 (e/alignment :aligned/uint32)))
+      (is (= 4 (e/alignment :aligned/float)))
+      (is (= 4 (e/alignment :aligned/double))))
+    (testing "long word aligned"
+      (is (= 1 (e/alignment :aligned-wide/int8)))
+      (is (= 2 (e/alignment :aligned-wide/int16)))
+      (is (= 4 (e/alignment :aligned-wide/int32)))
+      (is (= 8 (e/alignment :aligned-wide/int64)))
+      (is (= 1 (e/alignment :aligned-wide/uint8)))
+      (is (= 2 (e/alignment :aligned-wide/uint16)))
+      (is (= 4 (e/alignment :aligned-wide/uint32)))
+      (is (= 4 (e/alignment :aligned-wide/float)))
+      (is (= 8 (e/alignment :aligned-wide/double)))))
+  (testing "coll alignment"
+    (testing "little endian"
+      (let [byte-coll (e/encode :little/int8 0x17)
+            short-coll (e/encode :little/int16 0x17)
+            int-coll (e/encode :little/int32 0x17)
+            long-coll (e/encode :little/int64 0x17)]
+        (is (= 1 (e/alignment byte-coll)))
+        (is (= 1 (e/alignment short-coll)))
+        (is (= 1 (e/alignment int-coll)))
+        (is (= 1 (e/alignment long-coll)))))
+    (testing "big endian"
+      (let [byte-coll (e/encode :big/int8 0x17)
+            short-coll (e/encode :big/int16 0x17)
+            int-coll (e/encode :big/int32 0x17)
+            long-coll (e/encode :big/int64 0x17)]
+        (is (= 1 (e/alignment byte-coll)))
+        (is (= 1 (e/alignment short-coll)))
+        (is (= 1 (e/alignment int-coll)))
+        (is (= 1 (e/alignment long-coll)))))
+    (testing "aligned"
+      (let [byte-coll (e/encode :aligned/int8 0x17)
+            short-coll (e/encode :aligned/int16 0x17)
+            int-coll (e/encode :aligned/int32 0x17)
+            long-coll (e/encode :aligned/int64 0x17)]
+        (is (= 1 (e/alignment byte-coll)))
+        (is (= 2 (e/alignment short-coll)))
+        (is (= 4 (e/alignment int-coll)))
+        (is (= 4 (e/alignment long-coll)))))
+    (testing "wide aligned"
+      (let [byte-coll (e/encode :aligned-wide/int8 0x17)
+            short-coll (e/encode :aligned-wide/int16 0x17)
+            int-coll (e/encode :aligned-wide/int32 0x17)
+            long-coll (e/encode :aligned-wide/int64 0x17)]
+        (is (= 1 (e/alignment byte-coll)))
+        (is (= 2 (e/alignment short-coll)))
+        (is (= 4 (e/alignment int-coll)))
+        (is (= 8 (e/alignment long-coll)))))))
+    
+    
 
 (testing "primitive codec binary"
   (let [byte-test {:value 0x17 :little (map unchecked-byte [0x17]) :big (map unchecked-byte [0x17])} 
@@ -150,5 +232,67 @@
     (testing "unsigned decoding"
       (is (= 0xFE (first (e/decode :little/uint8 [(unchecked-byte 0xFE)]))))
       (is (= 0xDEADBEEF (first (e/decode :little/uint32 (:little int-test))))))))
+
+
+(s/def ::foo ::e/int16)
+(s/def ::bar ::foo)
+(testing "nested codecs"
+  (is (= [12 0] (e/encode ::foo 12)))
+  (is (= [12 0] (e/encode ::bar 12))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Composite types
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;Testing Binary collection building and flattening
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(testing "make binary"
+  (testing "alignment of made binary"
+    (is (= 1 (e/alignment (e/make-binary [1 2 3]))))
+    (is (= 1 (e/alignment (e/make-binary [1 2 3] :alignment 1))))
+    (is (= 2 (e/alignment (e/make-binary [1 2 3] :alignment 2))))
+    (is (= 4 (e/alignment (e/make-binary [1 2 3] :alignment 4))))
+    (is (= 8 (e/alignment (e/make-binary [1 2 3] :alignment 8)))))
+  (testing "order of a binary"
+    (is (= [:foo ::bar :baz] (e/binary-coll-key-order (e/make-binary {:foo 1 ::bar 2 :baz 3}))))
+    (is (= [:foo] (e/binary-coll-key-order (e/make-binary {:foo 1 ::bar 2 :baz 3} :key-order [:foo]))))
+    (is (= [::bar :baz :foo] (e/binary-coll-key-order (e/make-binary {:foo 1 ::bar 2 :baz 3} :key-order [::bar :baz :foo]))))))
+
+(testing "flatten"
+  (testing "sequential"
+    (testing "no alignment"
+      (let [bin [(e/encode ::e/uint8 17) (e/encode ::e/uint32 101) (e/encode ::e/uint16 25)]]
+        (is (= 7 (e/sizeof bin)))
+        (is (= [17 101 0 0 0 25 0] (e/flatten bin))))) 
+    (testing "alignment"
+      (let [bin [(e/encode :aligned/uint8 17) (e/encode :aligned/uint32 101) (e/encode :aligned/uint16 25)]]
+        (is (= 10 (e/sizeof bin)))
+        (is (= [17 0 0 0 101 0 0 0 25 0] (e/flatten bin))))))
+  (testing "associative"
+    (testing "no alignment"
+      (let [bin {:foo (e/encode ::e/uint8 17) ::bar (e/encode ::e/uint32 101) :baz (e/encode ::e/uint16 25)}]
+        (is (= 7 (e/sizeof bin)))
+        (is (= [17 101 0 0 0 25 0] (e/flatten bin))))) 
+    (testing "alignment"
+      (let [bin {:foo (e/encode :aligned/uint8 17) ::bar (e/encode :aligned/uint32 101) :baz (e/encode :aligned/uint16 25)}]
+        (is (= 10 (e/sizeof bin)))
+        (is (= [17 0 0 0 101 0 0 0 25 0] (e/flatten bin))))))
+  (testing "re-ordered associative"
+    (testing "no alignment"
+      (let [bin (e/make-binary {:foo (e/encode ::e/uint8 17) 
+                              ::bar (e/encode ::e/uint32 101) 
+                              :baz (e/encode ::e/uint16 25)}
+                             :key-order [:baz ::bar :foo])]
+        (is (= 7 (e/sizeof bin)))
+        (is (= [25 0 101 0 0 0 17] (e/flatten bin))))) 
+    (testing "alignment"
+      (let [bin (e/make-binary {:foo (e/encode :aligned/uint8 17) 
+                                ::bar (e/encode :aligned/uint32 101) 
+                                :baz (e/encode :aligned/uint16 25)}
+                               :key-order [:baz ::bar :foo])]
+        (is (= 9 (e/sizeof bin)))
+        (is (= [25 0 0 0 101 0 0 0 17] (e/flatten bin)))))))
 
 
