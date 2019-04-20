@@ -61,6 +61,10 @@
   [bin & {:keys [key-order alignment]}]
   (with-meta bin {::key-order key-order ::alignment alignment}))
 
+(defn align-binary [bin align-to]
+  (with-meta bin
+             (assoc (meta bin) ::alignment align-to)))
+
 (defn binary-coll-alignment [bin]
   (or (get (meta bin) ::alignment) 1))
 
@@ -149,26 +153,6 @@
   (when (or (satisfies? Codec x) (-> x meta (contains? `encode*)))
     x))
 
-(defn codify [x enc dec & {:keys [alignment size]
-                           :or {alignment nil size nil}}]
-  (with-meta (if (s/spec? x)
-               x
-               (s/spec x))
-             (assoc (meta x)
-                    `encode* enc
-                    `decode* dec
-                    `alignment* (constantly alignment)
-                    `sizeof* (constantly size))))
-
-(defn specify 
-  "Given a list of codecs and specs, specify will create a specified
-  codec that will have the same codec properties, and a spec as per
-  using s/and on each of the passed specs"
-  [& specs-and-codecs]
-  (let [the-codec (first (filter codec? specs-and-codecs))]
-    (with-meta (s/spec* `(s/and ~@specs-and-codecs))
-               (meta the-codec))))
-
 (defn alignment [bin]
   (alignment* (specize bin)))
 
@@ -181,6 +165,36 @@
 (defn decode [codec binary-seq]
   (let [c (specize codec)]
     (decode* c (trim-to-alignment (alignment* c) binary-seq))))
+
+(defn codify [x enc dec & {:keys [alignment fixed-size dynamic-size]
+                           :or {alignment nil fixed-size nil dynamic-size (constantly nil)}}]
+  (with-meta (cond
+               (s/spec? x) x
+               (ident? x) (specize x)
+               :else (s/spec x))
+             (assoc (meta x)
+                    `encode* enc
+                    `decode* dec
+                    `alignment* (constantly alignment)
+                    `sizeof* (if (some? fixed-size)
+                               (constantly fixed-size)
+                               dynamic-size))))
+
+(defn specify 
+  "Given a list of codecs and specs, specify will create a specified
+  codec that will have the same codec properties, and a spec as per
+  using s/and on each of the passed specs"
+  [& specs-and-codecs]
+  (let [the-codec (first (filter codec? specs-and-codecs))]
+    (with-meta (s/spec* `(s/and ~@specs-and-codecs))
+               (meta the-codec))))
+
+(defn align [codec align-to]
+  (codify codec
+          (fn [_ data] (align-binary align-to (encode codec data)))
+          (fn [_ bin] (decode codec (trim-to-alignment align-to bin)))
+          :alignment align-to
+          :fixed-size (sizeof codec)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;Defining Primitive Codecs
@@ -233,7 +247,7 @@
              (put-prim (:put-buffer ~ops) ~size ~order ~alignment)
              (get-prim (:get-buffer ~ops) ~size ~order ~alignment)
              :alignment ~alignment
-             :size ~size)))
+             :fixed-size ~size)))
 
 (defmacro unsigned-primitive [prim & {:keys [word-size order]
                              :or {word-size 1}}]
@@ -246,7 +260,7 @@
              (put-prim (:put-buffer ~ops) ~size ~order ~alignment)
              (get-prim (comp ~to-unsigned (:get-buffer ~ops)) ~size ~order ~alignment)
              :alignment ~alignment
-             :size ~size)))
+             :fixed-size ~size)))
 
 (defmacro floating-primitive [prim & {:keys [word-size order]
                              :or {word-size 1}}]
@@ -259,7 +273,7 @@
              (put-prim (:put-buffer ~ops) ~size ~order ~alignment)
              (get-prim (:get-buffer ~ops) ~size ~order ~alignment)
              :alignment ~alignment
-             :size ~size)))
+             :fixed-size ~size)))
 
 (s/def ::int8 (primitive Byte))
 (s/def ::int16 (primitive Short))
@@ -273,3 +287,78 @@
 (s/def ::float (floating-primitive Float))
 (s/def ::double (floating-primitive Double))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Composite Types
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn sequence-encoder [codec-seq data]
+  (map encode codec-seq data))
+
+(defn sequence-decoder [codec-seq bin pred-map]
+  (let [{:keys [bytes count until-value while-bytes]
+         :or {bytes nil count nil 
+              until-value (constantly false) while-bytes (constantly true)}} pred-map
+        [bin-to-decode remaining-forced] (if (some? bytes)
+                                           (split-binary bytes bin)
+                                           [bin nil])
+        cs (if (some? count)
+             (take count codec-seq)
+             codec-seq)
+        [data remaining] (reduce (fn [[accum rem-so-far] c]
+                                   (if (or (empty? rem-so-far) (not (while-bytes rem-so-far)))
+                                     (reduced [accum rem-so-far])
+                                     (let [[new-data new-rem] (decode c rem-so-far)
+                                           result [(conj accum new-data) new-rem]]
+                                       (if (until-value new-data)
+                                         (reduced result)
+                                         result))))
+                                 [[] bin-to-decode]
+                                 cs)
+        ;; The remaining data will be either from the forced split, or from 
+        remaining-final (or remaining-forced remaining)]
+    [data remaining-final]))
+
+(defn array
+  [codec & {:keys [align kind count max-count min-count distinct gen-max gen]}]
+  (let [array-alignment (alignment codec)
+        spec (s/spec* `(s/coll-of ~codec
+                                  :into []
+                                  :kind ~kind
+                                  :count ~count
+                                  :max-count ~max-count
+                                  :min-count ~min-count
+                                  :distinct ~distinct
+                                  :gen-max ~gen-max
+                                  :gen ~gen))]
+    (if (some? count)
+      (codify spec
+              (fn [_ data] (sequence-encoder (repeat count codec) data))
+              (fn [_ bin] (sequence-decoder (repeat count codec) bin {}))
+              :alignment array-alignment
+              :fixed-size (if-let [elem-size (sizeof codec)]
+                            (* elem-size count)
+                            nil))
+      (codify spec
+              (fn [_ data] (sequence-encoder (repeat codec) data))
+              (fn [this bin] (sequence-decoder (repeat codec) bin (meta this)))
+              :alignment array-alignment
+              :dynamic-size (if-let [elem-size (sizeof codec)]
+                              (fn [this] (if-let [dynamic-count (:count (meta this))]
+                                           (* elem-size dynamic-count)
+                                   nil))
+                              (constantly nil)))
+      )))
+
+
+(defn tuple [])
+(defn struct [])
+(defn union [])
+
+(defn multicodec [])
+(defn cat [])
+(defn alt [])
+(defn * [])
+(defn + [])
+(defn ? [])
+(defn & [])
+(defn nest [])
