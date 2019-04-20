@@ -144,6 +144,11 @@
   (encode* [this data])
   (decode* [this binary-seq]))
 
+(defn codec? [x]
+  "returns x when x is a codec, nil otherwise"
+  (when (or (satisfies? Codec x) (-> x meta (contains? `encode*)))
+    x))
+
 (defn codify [x enc dec & {:keys [alignment size]
                            :or {alignment nil size nil}}]
   (with-meta (if (s/spec? x)
@@ -154,7 +159,15 @@
                     `decode* dec
                     `alignment* (constantly alignment)
                     `sizeof* (constantly size))))
-(defn specify [])
+
+(defn specify 
+  "Given a list of codecs and specs, specify will create a specified
+  codec that will have the same codec properties, and a spec as per
+  using s/and on each of the passed specs"
+  [& specs-and-codecs]
+  (let [the-codec (first (filter codec? specs-and-codecs))]
+    (with-meta (s/spec* `(s/and ~@specs-and-codecs))
+               (meta the-codec))))
 
 (defn alignment [bin]
   (alignment* (specize bin)))
