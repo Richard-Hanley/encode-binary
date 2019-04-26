@@ -83,7 +83,6 @@
     (with-meta (drop bytes-off binary-coll)
                (update (meta binary-coll) ::index (fnil #(+ bytes-off %) 0)))))
 
-
 (defprotocol Binary
   :extend-via-metadata true
   (alignment* [this])
@@ -356,7 +355,17 @@
       )))
 
 
-(defn tuple [])
+(defn tuple [& codecs]
+  (codify (s/spec* `(s/tuple ~@codecs))
+          (fn [_ data] (sequence-encoder codecs data))
+          (fn [_ bin] (sequence-decoder codecs bin {}))
+          :alignment (apply max (map alignment codecs))
+          :fixed-size (reduce (fn [a v] (if (nil? v)
+                                          (reduced nil)
+                                          (+ a v)))
+                              0
+                              (map sizeof codecs))))
+  
 (defn struct [])
 
 ;;TODO Figure out padding of a union type
