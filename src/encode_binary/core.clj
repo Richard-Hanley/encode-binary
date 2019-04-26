@@ -162,9 +162,14 @@
 (defn encode [codec data]
   (encode* (specize codec) data))
 
-(defn decode [codec binary-seq]
-  (let [c (specize codec)]
-    (decode* c (trim-to-alignment (alignment* c) binary-seq))))
+(defn decode 
+  ([codec binary-seq]
+   (let [c (specize codec)]
+     (decode* c (trim-to-alignment (alignment* c) binary-seq))))
+  ([codec binary-seq pred-map]
+   (let [c (specize codec)]
+     (decode* (with-meta c (merge (meta c) pred-map))
+              (trim-to-alignment (alignment* c) binary-seq)))))
 
 (defn codify [x enc dec & {:keys [alignment fixed-size dynamic-size]
                            :or {alignment nil fixed-size nil dynamic-size (constantly nil)}}]
@@ -180,14 +185,15 @@
                                (constantly fixed-size)
                                dynamic-size))))
 
-(defn specify 
+(defmacro specify
   "Given a list of codecs and specs, specify will create a specified
   codec that will have the same codec properties, and a spec as per
   using s/and on each of the passed specs"
   [& specs-and-codecs]
-  (let [the-codec (first (filter codec? specs-and-codecs))]
-    (with-meta (s/spec* `(s/and ~@specs-and-codecs))
-               (meta the-codec))))
+  `(with-meta (s/and ~@specs-and-codecs)
+              (meta (first (filter codec? [~@specs-and-codecs])))))
+
+
 
 (defn align [codec align-to]
   (codify codec
@@ -352,7 +358,35 @@
 
 (defn tuple [])
 (defn struct [])
-(defn union [])
+
+;;TODO Figure out padding of a union type
+(defn union 
+  "Creates a union of types with an optional decoder tag.
+
+  A decoder tag takes a binary sequence and returns a keyword
+  that is one of the field names.
+
+  A field is a fully qualified keyword that has been registered
+  while a named field is a list of key-codec pairs."
+  [& {:keys [decoder-tag fields named-fields]}]
+  ;; Registered fields are their own keys
+  (let [all-fields (concat (interleave fields fields) named-fields)
+        field-map (apply array-map all-fields)
+        decoder (if (some? decoder-tag)
+                  ;;If there is a decoder tag, use it to figure out the type
+                  ;;Otherwise look in the metadata
+                  (fn [_ bin] (decode (get field-map (decoder-tag bin)) bin))
+                  (fn [this bin] (decode (get field-map (::decoder-tag (meta this))) bin)))]
+    (codify (s/spec* `(s/or ~@all-fields))
+            (fn [_ [tag data]] (encode (get field-map tag) data))
+            decoder
+            :alignment (reduce max (map alignment (vals field-map)))
+            :fixed-size (reduce (fn [a v] (if (nil? v)
+                                            (reduced nil)
+                                            (max a v)))
+                                0
+                                (map sizeof (vals field-map))))))
+
 
 (defn multicodec [])
 (defn cat [])
