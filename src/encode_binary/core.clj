@@ -58,18 +58,24 @@
   (flatten [this]))
 
 (defn make-binary 
-  [bin & {:keys [key-order alignment]}]
-  (with-meta bin {::key-order key-order ::alignment alignment}))
+  [bin & {:keys [key-order alignment padding]}]
+  (let [replace-arg #(or %2 %1)]
+    (with-meta bin 
+               (-> (meta bin)
+                   (update ::key-order replace-arg key-order)
+                   (update ::alignment replace-arg alignment)
+                   (update ::padding replace-arg padding)))))
 
-(defn align-binary [bin align-to]
-  (with-meta bin
-             (assoc (meta bin) ::alignment align-to)))
+                   ; {::key-order key-order ::alignment alignment}))
 
 (defn binary-coll-alignment [bin]
   (or (get (meta bin) ::alignment) 1))
 
 (defn binary-coll-key-order [bin]
   (or (get (meta bin) ::key-order) (keys bin)))
+
+(defn binary-coll-padding [bin]
+  (get (meta bin) ::padding))
 
 (defn alignment-padding [align-to position]
   (let [bytes-over (mod position align-to)]
@@ -82,6 +88,11 @@
                                      (current-index binary-coll))]
     (with-meta (drop bytes-off binary-coll)
                (update (meta binary-coll) ::index (fnil #(+ bytes-off %) 0)))))
+
+(defn add-padding [pad-to coll]
+  (if (some? pad-to)
+    (take pad-to (concat coll (repeat (byte 0))))
+    coll))
 
 (defprotocol Binary
   :extend-via-metadata true
@@ -122,7 +133,7 @@
                                             [(concat accum new-bytes) (max elem-alignment max-alignment) new-index]))
                                            [[] coll-alignment 0]
                                            (map flatten this))]
-      (make-binary bin :alignment max-alignment)))
+      (make-binary (add-padding (binary-coll-padding this) bin) :alignment max-alignment)))
   Binary
   (alignment* [this] (binary-coll-alignment this))
   (sizeof* [this] (count (flatten this))))
@@ -134,7 +145,7 @@
     (let [coll-alignment (alignment* this)
           ordered-vals (map #(get this %) (binary-coll-key-order this))
           bin (flatten ordered-vals)]
-      (make-binary bin :align (max coll-alignment (binary-coll-alignment bin)))))
+      (make-binary (add-padding (binary-coll-padding this) bin) :align (max coll-alignment (binary-coll-alignment bin)))))
   Binary
   (alignment* [this] (binary-coll-alignment this))
   (sizeof* [this] (count (flatten this))))
@@ -196,10 +207,21 @@
 
 (defn align [codec align-to]
   (codify codec
-          (fn [_ data] (align-binary align-to (encode codec data)))
+          (fn [_ data] (make-binary (encode codec data) :alignment align-to))
           (fn [_ bin] (decode codec (trim-to-alignment align-to bin)))
           :alignment align-to
           :fixed-size (sizeof codec)))
+
+(defn pad [codec pad-to]
+  (codify codec
+          (fn [_ data] (make-binary (encode codec data) :padding pad-to))
+          (fn [_ bin] (let [[bin-to-decode rem] (split-binary pad-to)
+                            [data _] (decode codec bin-to-decode)]
+                        [data rem]))
+          :alignment (alignment codec)
+          :fixed-size pad-to))
+
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;Defining Primitive Codecs

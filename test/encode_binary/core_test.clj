@@ -46,9 +46,6 @@
 (s/def :aligned-wide/float (e/floating-primitive Float :word-size 8))
 (s/def :aligned-wide/double (e/floating-primitive Double :word-size 8))
 
-
-
-
 (testing "primitive specs"
   (testing "signed"
     (testing "zero checking"
@@ -293,7 +290,9 @@
                                 :baz (e/encode :aligned/uint16 25)}
                                :key-order [:baz ::bar :foo])]
         (is (= 9 (e/sizeof bin)))
-        (is (= [25 0 0 0 101 0 0 0 17] (e/flatten bin)))))))
+        (is (= [25 0 0 0 101 0 0 0 17] (e/flatten bin))))))
+  (testing "padding"
+    (is (= [1 1 0 0 0 0 0 0] (e/flatten (e/make-binary (e/encode ::e/uint16 0x101) :padding 8))))))
 
 
 (testing "array codecs"
