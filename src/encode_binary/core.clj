@@ -6,6 +6,9 @@
   (:require [clojure.spec-alpha2 :as s]
             [clojure.set :as set]))
 
+(defn- meta-merge [obj metadata]
+  (with-meta obj
+             (merge (meta obj) metadata)))
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Resolvers from spec registry
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -163,22 +166,26 @@
   (when (or (satisfies? Codec x) (-> x meta (contains? `encode*)))
     x))
 
-(defn alignment [bin]
-  (alignment* (specize bin)))
+(defn alignment 
+  ([bin] (alignment* (specize bin)))
+  ([bin metadata] (alignment* (meta-merge (specize bin) metadata))))
 
-(defn sizeof [bin]
-  (sizeof* (specize bin)))
+(defn sizeof 
+  ([bin] (sizeof* (specize bin)))
+  ([bin metadata] (sizeof* (meta-merge (specize bin) metadata))))
 
-(defn encode [codec data]
-  (encode* (specize codec) data))
+
+(defn encode 
+  ([codec data] (encode* (specize codec) data))
+  ([codec data metadata] (encode* (meta-merge (specize codec) metadata) data)))
 
 (defn decode 
   ([codec binary-seq]
    (let [c (specize codec)]
      (decode* c (trim-to-alignment (alignment* c) binary-seq))))
-  ([codec binary-seq pred-map]
+  ([codec binary-seq metadata]
    (let [c (specize codec)]
-     (decode* (with-meta c (merge (meta c) pred-map))
+     (decode* (meta-merge c metadata)
               (trim-to-alignment (alignment* c) binary-seq)))))
 
 (defn codify [x enc dec & {:keys [alignment fixed-size dynamic-size]
@@ -195,14 +202,14 @@
                                (constantly fixed-size)
                                dynamic-size))))
 
-(defmacro specify
+(defn specify
   "Given a list of codecs and specs, specify will create a specified
   codec that will have the same codec properties, and a spec as per
   using s/and on each of the passed specs"
   [& specs-and-codecs]
-  `(with-meta (s/and ~@specs-and-codecs)
-              (meta (first (filter codec? [~@specs-and-codecs])))))
-
+  (let [specs (map s/form specs-and-codecs)]
+    (with-meta (s/spec* `(s/and ~@specs))
+               (meta (first (filter codec? specs-and-codecs))))))
 
 
 (defn align [codec align-to]
@@ -221,6 +228,23 @@
           :alignment (alignment codec)
           :fixed-size pad-to))
 
+(defn static-codec [codec & key-pred-pairs]
+  (let [pred-map (apply array-map key-pred-pairs)]
+    (codify codec
+            (fn [_ data] (encode codec data))
+            (fn [_ bin] (decode codec bin pred-map))
+            :alignment (alignment codec )
+           :fixed-size (sizeof codec pred-map))))
+ 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Common specs that can be used in codec definitions
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(s/defop constant-field [field value]
+  (s/conformer #(assoc % field value)))
+
+(s/defop dependent-field [field f]
+  (s/conformer #(assoc % field (f %))))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -322,7 +346,7 @@
   (map encode codec-seq data))
 
 (defn sequence-decoder [codec-seq bin pred-map]
-  (let [{:keys [bytes count until-value while-bytes]
+  (let [{:encode-binary.core/keys [bytes count until-value while-bytes]
          :or {bytes nil count nil 
               until-value (constantly false) while-bytes (constantly true)}} pred-map
         [bin-to-decode remaining-forced] (if (some? bytes)
@@ -370,7 +394,7 @@
               (fn [this bin] (sequence-decoder (repeat codec) bin (meta this)))
               :alignment array-alignment
               :dynamic-size (if-let [elem-size (sizeof codec)]
-                              (fn [this] (if-let [dynamic-count (:count (meta this))]
+                              (fn [this] (if-let [dynamic-count (::count (meta this))]
                                            (* elem-size dynamic-count)
                                    nil))
                               (constantly nil)))
@@ -378,15 +402,16 @@
 
 
 (defn tuple [& codecs]
-  (codify (s/spec* `(s/tuple ~@codecs))
-          (fn [_ data] (sequence-encoder codecs data))
-          (fn [_ bin] (sequence-decoder codecs bin {}))
-          :alignment (apply max (map alignment codecs))
-          :fixed-size (reduce (fn [a v] (if (nil? v)
-                                          (reduced nil)
-                                          (+ a v)))
-                              0
-                              (map sizeof codecs))))
+  (let [symbolic-specs (map (fn [c] (s/form c)) codecs)]
+    (codify (s/spec* `(s/tuple ~@symbolic-specs))
+            (fn [_ data] (sequence-encoder codecs data))
+            (fn [_ bin] (sequence-decoder codecs bin {}))
+            :alignment (apply max (map alignment codecs))
+            :fixed-size (reduce (fn [a v] (if (nil? v)
+                                            (reduced nil)
+                                            (+ a v)))
+                                0
+                                (map sizeof codecs)))))
   
 (defn struct [])
 
