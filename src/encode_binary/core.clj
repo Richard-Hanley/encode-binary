@@ -207,9 +207,10 @@
   codec that will have the same codec properties, and a spec as per
   using s/and on each of the passed specs"
   [& specs-and-codecs]
-  (let [specs (map s/form specs-and-codecs)]
+  (let [codec (first (filter codec? (map specize specs-and-codecs)))
+        specs (map s/form specs-and-codecs)]
     (with-meta (s/spec* `(s/and ~@specs))
-               (meta (first (filter codec? specs-and-codecs))))))
+               (meta codec))))
 
 
 (defn align [codec align-to]
@@ -414,7 +415,35 @@
                                 0
                                 (map sizeof codecs)))))
   
-(defn struct [])
+(defn- convert-field [field]
+  (if (keyword? field)
+    {:key field :res field}
+    field))
+
+(defn unqualified [field]
+  (if (keyword? field)
+    {:key field :res (keyword (name field)) :un true}
+    (assoc :res (keyword (name (:key field))))))
+
+(defn struct [& fields]
+  (let [resolved-fields (map convert-field fields)
+        req-un (map :key (filter :un resolved-fields))
+        req (map :key (filter (complement :un) resolved-fields))
+        codecs (map :key resolved-fields)
+        result-keys (map :res resolved-fields)]
+    (codify (s/spec* `(s/keys :req [~@req] :req-un [~@req-un]))
+            (fn [_ data] (sequence-encoder codecs (map #(get data %) result-keys)))
+            (fn [_ bin] 
+              (let [[data-seq rem] (sequence-decoder codecs bin {})
+                    data (zipmap result-keys data-seq)]
+                [data rem]))
+            :alignment (apply max (map alignment codecs))
+            :fixed-size (reduce (fn [a v] (if (nil? v)
+                                            (reduced nil)
+                                            (+ a v)))
+                                0
+                                (map sizeof codecs)))))
+  
 
 ;;TODO Figure out padding of a union type
 (defn union 
