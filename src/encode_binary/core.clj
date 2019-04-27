@@ -372,7 +372,8 @@
 (defn array
   [codec & {:keys [align kind count max-count min-count distinct gen-max gen]}]
   (let [array-alignment (alignment codec)
-        spec (s/spec* `(s/coll-of ~codec
+        codec-form (s/form codec)
+        spec (s/spec* `(s/coll-of ~codec-form
                                   :into []
                                   :kind ~kind
                                   :count ~count
@@ -419,21 +420,23 @@
 (defn union 
   "Creates a union of types with an optional decoder tag.
 
-  A decoder tag takes a binary sequence and returns a keyword
+  A decoder tag is a function that takes a binary sequence and returns a keyword
   that is one of the field names.
 
   A field is a fully qualified keyword that has been registered
   while a named field is a list of key-codec pairs."
   [& {:keys [decoder-tag fields named-fields]}]
   ;; Registered fields are their own keys
-  (let [all-fields (concat (interleave fields fields) named-fields)
+  (let [name-form-pairs (apply concat (map (fn [[n c]] [n (s/form c)]) (partition 2 named-fields)))
+        all-specs (concat (interleave fields fields) name-form-pairs)
+        all-fields (concat (interleave fields fields) named-fields)
         field-map (apply array-map all-fields)
         decoder (if (some? decoder-tag)
                   ;;If there is a decoder tag, use it to figure out the type
                   ;;Otherwise look in the metadata
                   (fn [_ bin] (decode (get field-map (decoder-tag bin)) bin))
                   (fn [this bin] (decode (get field-map (::decoder-tag (meta this))) bin)))]
-    (codify (s/spec* `(s/or ~@all-fields))
+    (codify (s/spec* `(s/or ~@all-specs))
             (fn [_ [tag data]] (encode (get field-map tag) data))
             decoder
             :alignment (reduce max (map alignment (vals field-map)))
