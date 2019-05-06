@@ -395,7 +395,7 @@
               (fn [_ bin] (sequence-decoder (repeat count codec) bin {} (repeat identity) (repeat (constantly nil))))
               :alignment array-alignment
               :fixed-size (if-let [elem-size (sizeof codec)]
-                            (* elem-size count)
+                            (* (+ elem-size (alignment-padding array-alignment elem-size)) count)
                             nil))
       (codify spec
               (fn [_ data] (sequence-encoder (repeat codec) data))
@@ -403,7 +403,7 @@
               :alignment array-alignment
               :dynamic-size (if-let [elem-size (sizeof codec)]
                               (fn [this] (if-let [dynamic-count (::count (meta this))]
-                                           (* elem-size dynamic-count)
+                                           (* (+ elem-size (alignment-padding array-alignment elem-size)) dynamic-count)
                                    nil))
                               (constantly nil)))
       )))
@@ -433,11 +433,12 @@
             (fn [_ data] (sequence-encoder fields data))
             (fn [_ bin] (sequence-decoder fields bin {} (repeat identity) decoder-deps))
             :alignment (apply max (map alignment fields))
-            :fixed-size (reduce (fn [a v] (if (nil? v)
-                                            (reduced nil)
-                                            (+ a v)))
+            :fixed-size (reduce (fn [a [size align-to]] 
+                                  (if (nil? size)
+                                    (reduced nil)
+                                    (+ a size (alignment-padding align-to a))))
                                 0
-                                (map sizeof fields)))))
+                                (map #(vector (sizeof %) (alignment %)) fields)))))
   
 (defn- convert-field [field]
   (if (keyword? field)
@@ -466,11 +467,12 @@
             (fn [_ data] (sequence-encoder codecs (map #(get data %) result-keys)))
             (fn [_ bin] (sequence-decoder codecs bin {} applicators decoder-deps))
             :alignment (apply max (map alignment codecs))
-            :fixed-size (reduce (fn [a v] (if (nil? v)
-                                            (reduced nil)
-                                            (+ a v)))
+            :fixed-size (reduce (fn [a [size align-to]]
+                                  (if (nil? size)
+                                    (reduced nil)
+                                    (+ a size (alignment-padding align-to a))))
                                 0
-                                (map sizeof codecs)))))
+                                (map #(vector (sizeof %) (alignment %)) codecs)))))
   
 
 ;;TODO Figure out padding of a union type
@@ -518,24 +520,20 @@
             0
             (vals (methods mm)))))
 
-(s/def ::bType ::uint8)
-(s/def ::bLength ::uint8)
-(s/def ::foo (tuple :fields [::int16 ::int32]))
-(s/def ::bar (align (array ::int8 :count 5) 4))
-(s/def ::st-foo (struct :fields [::bLength ::bType ::foo]))
-(s/def ::st-bar (struct :fields [::bLength ::bType ::bar]))
-
-(defmulti open-st ::bType)
-
-(defmethod open-st 1 [_] ::st-foo)
-(defmethod open-st 2 [_] ::st-bar)
-
+(defn get-mm-enc-fn
+  [mm enc-tag]
+  (if (some? enc-tag)
+   (fn [_ data]
+     (encode* ((get-method mm (enc-tag data)) nil) data))
+   (fn [_ data]
+     (encode* ((mm data) nil) data))))
 
 (defmacro multi-codec 
-  ([mm retag] `(binify (s/multi-spec ~mm ~retag)
-                       (get-mm-sizeof-fn ~mm)
-                       (get-mm-alignment-fn ~mm)))
-  ([mm retag decoder-tag] 2))
+  [mm retag & {:keys [encoder-tag decoder-tag]}] 
+  `(binify (codify (s/multi-spec ~mm ~retag) (get-mm-enc-fn ~mm ~encoder-tag) nil)
+           (get-mm-sizeof-fn ~mm)
+           (get-mm-alignment-fn ~mm)))
+; ([mm retag decoder-tag] 2))
 
 (defn cat [])
 (defn alt [])

@@ -301,6 +301,12 @@
     (is (= 1 (e/alignment (e/array ::e/uint16))))
     (is (= 4 (e/alignment (e/array (e/align ::e/uint16 4)))))
     (is (= 8 (e/alignment (e/array (e/align ::e/uint16 8))))))
+  (testing "sizeof"
+    (is (= nil (e/sizeof (e/array ::e/uint16))))
+    (is (= 6 (e/sizeof (e/array ::e/uint16 :count 3))))
+    (is (= 12 (e/sizeof (e/array (e/align ::e/uint16 4) :count 3))))
+    )
+
   (let [arr-unbd (e/array ::e/uint16)
         arr-bd (e/array ::e/uint16 :count 3)]
     (testing "array conformance"
@@ -324,6 +330,9 @@
     (is (= [5 -1] (s/conform (e/tuple :fields [::e/uint8 ::e/int16]) [5 -1])))
     (is (= (s/invalid? (s/conform (e/tuple :fields [::e/uint8 ::e/int16]) [257 -1]))))
     (is (= (s/invalid? (s/conform (e/tuple :fields [::e/uint8 ::e/int16]) [5 0x10000])))))
+  (testing "sizeof"
+    (is (= 3 (e/sizeof (e/tuple :fields [::e/uint8 ::e/int16]))))
+    (is (= 6 (e/sizeof (e/tuple :fields [::e/uint8 (e/align ::e/int16 4)])))))
   (let [simple-tup (e/tuple :fields [::e/uint8 ::e/uint32 ::e/uint16])]
     (testing "encoding"
       (is (= [1 2 0 0 0 3 0] (e/flatten (e/encode simple-tup [1 2 3])))))
@@ -416,7 +425,38 @@
       (is (= ::s/invalid
              (s/conform ::open-union {::bLength 10 ::bType 2 ::arr [1 2 3]})))
       (is (= ::s/invalid
-             (s/conform ::open-union {::bLength 10 ::bType 1 ::arr [1 2 3 4 5]}))))
+             (s/conform ::open-union {::bLength 10 ::bType 1 ::arr [1 2 3 4 5]})))))
+  (testing "alignment"
+    (testing "union"
+      (is (= 4 (e/alignment ::union))))
+    (testing "multi-codec"
+      (is (= 4 (e/alignment ::open-union)))))
+  (testing "sizeof"
+    (testing "union"
+      (is (= 9 (e/sizeof ::union))))
+    (testing "multi-codec"
+      (is (= 9 (e/sizeof ::open-union)))))
+  (testing "encoding"
+    (testing "union"
+      (is (= [10 2 1 0 2 0 0 0] 
+             (e/flatten (e/encode ::union [::st-tup {::bLength 10 ::bType 2 ::tup [1 2]}]))))
+      (is (= [10 1 0 0 1 2 3 4 5]
+             (e/flatten (e/encode ::union [::st-arr {::bLength 10 ::bType 1 ::arr [1 2 3 4 5]}])))))
+    (testing "multi-codec"
+      )
     )
-
+  (testing "decoding"
+    (testing "implicit"
+      (testing "union"
+        )
+      (testing "multi-codec"
+        )
+      )
+    (testing "explicit"
+      (testing "union"
+        )
+      (testing "multi-codec"
+        )
+    )
+  )
   )
