@@ -320,16 +320,16 @@
 
 (testing "tuple codecs"
   (testing "conformance"
-    (is (= [5 -1] (s/conform (e/tuple ::e/uint8 ::e/int16) [5 -1])))
-    (is (= (s/invalid? (s/conform (e/tuple ::e/uint8 ::e/int16) [257 -1]))))
-    (is (= (s/invalid? (s/conform (e/tuple ::e/uint8 ::e/int16) [5 0x10000])))))
-  (let [simple-tup (e/tuple ::e/uint8 ::e/uint32 ::e/uint16)]
+    (is (= [5 -1] (s/conform (e/tuple :fields [::e/uint8 ::e/int16]) [5 -1])))
+    (is (= (s/invalid? (s/conform (e/tuple :fields [::e/uint8 ::e/int16]) [257 -1]))))
+    (is (= (s/invalid? (s/conform (e/tuple :fields [::e/uint8 ::e/int16]) [5 0x10000])))))
+  (let [simple-tup (e/tuple :fields [::e/uint8 ::e/uint32 ::e/uint16])]
     (testing "encoding"
       (is (= [1 2 0 0 0 3 0] (e/flatten (e/encode simple-tup [1 2 3])))))
     (testing "decoding"
       (is (= [1 2 3] (first (e/decode simple-tup [1 2 0 0 0 3 0]))))))
   (testing "dependent tuple"
-    (let [dep-tup (e/specify (e/tuple ::e/uint8 (e/array ::e/uint16))
+    (let [dep-tup (e/specify (e/tuple :fields [::e/uint8 (e/array ::e/uint16)])
                              (e/dependent-field 0 #(count (second %))))]
       (testing "conformance"
         (is (= [0 []] (s/conform dep-tup [0 []])))
@@ -345,14 +345,14 @@
 
 (s/def ::bLength ::e/uint8)
 (s/def ::bCount ::e/uint8)
-(s/def ::arrData (e/array (e/tuple ::e/int8 ::e/uint16)))
-(s/def ::simple-struct (e/struct ::bLength
-                                 (e/unqualified ::bCount)
-                                 ::arrData))
+(s/def ::arrData (e/array (e/tuple :fields [::e/int8 ::e/uint16])))
+(s/def ::simple-struct (e/struct :fields [::bLength
+                                          (e/unqualified ::bCount)
+                                          ::arrData]))
 
-(s/def ::dep-struct (e/specify (e/struct ::bLength
-                                       (e/unqualified ::bCount)
-                                       ::arrData)
+(s/def ::dep-struct (e/specify (e/struct :fields [::bLength
+                                                  (e/unqualified ::bCount)
+                                                  ::arrData])
                                (e/dependent-field ::bLength #(e/sizeof (e/encode ::dep-struct %)))
                                (e/dependent-field :bCount #(count (::arrData %)))))
 

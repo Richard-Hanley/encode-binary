@@ -37,7 +37,7 @@
           (throw (Exception. (str "Unable to resolve spec: " k))))
     k))
 
-(defn- specize [x]
+(defn specize [x]
     (if (keyword? x) (reg-resolve! x) x))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -187,6 +187,12 @@
    (let [c (specize codec)]
      (decode* (meta-merge c metadata)
               (trim-to-alignment (alignment* c) binary-seq)))))
+
+(defn binify [x size-fn align-fn]
+  (with-meta x
+             (assoc (meta x)
+                    `sizeof* size-fn
+                    `alignment* align-fn)))
 
 (defn codify [x enc dec & {:keys [alignment fixed-size dynamic-size]
                            :or {alignment nil fixed-size nil dynamic-size (constantly nil)}}]
@@ -346,7 +352,7 @@
 (defn sequence-encoder [codec-seq data]
   (map encode codec-seq data))
 
-(defn sequence-decoder [codec-seq bin pred-map data-applicators]
+(defn sequence-decoder [codec-seq bin pred-map data-applicators decoder-deps]
   (let [{:encode-binary.core/keys [bytes count until-value while-bytes]
          :or {bytes nil count nil 
               until-value (constantly false) while-bytes (constantly true)}} pred-map
@@ -356,16 +362,16 @@
         cs (if (some? count)
              (take count codec-seq)
              codec-seq)
-        [data remaining] (reduce (fn [[accum rem-so-far] [c applicator]]
+        [data remaining] (reduce (fn [[accum rem-so-far] [c applicator dep]]
                                    (if (or (empty? rem-so-far) (not (while-bytes rem-so-far)))
                                      (reduced [accum rem-so-far])
-                                     (let [[new-data new-rem] (decode c rem-so-far)
+                                     (let [[new-data new-rem] (decode c rem-so-far (dep accum pred-map))
                                            result [(conj accum (applicator new-data)) new-rem]]
                                        (if (until-value new-data)
                                          (reduced result)
                                          result))))
                                  [[] bin-to-decode]
-                                 (map vector cs data-applicators))
+                                 (map vector cs data-applicators decoder-deps))
         ;; The remaining data will be either from the forced split, or from 
         remaining-final (or remaining-forced remaining)]
     [data remaining-final]))
@@ -386,14 +392,14 @@
     (if (some? count)
       (codify spec
               (fn [_ data] (sequence-encoder (repeat count codec) data))
-              (fn [_ bin] (sequence-decoder (repeat count codec) bin {} (repeat identity)))
+              (fn [_ bin] (sequence-decoder (repeat count codec) bin {} (repeat identity) (repeat (constantly nil))))
               :alignment array-alignment
               :fixed-size (if-let [elem-size (sizeof codec)]
                             (* elem-size count)
                             nil))
       (codify spec
               (fn [_ data] (sequence-encoder (repeat codec) data))
-              (fn [this bin] (sequence-decoder (repeat codec) bin (meta this) (repeat identity)))
+              (fn [this bin] (sequence-decoder (repeat codec) bin (meta this) (repeat identity) (repeat (constantly nil))))
               :alignment array-alignment
               :dynamic-size (if-let [elem-size (sizeof codec)]
                               (fn [this] (if-let [dynamic-count (::count (meta this))]
@@ -402,18 +408,36 @@
                               (constantly nil)))
       )))
 
+(defn process-deps 
+  "A dependency list is a tuple of keys and maps that have a :spec
+  and a :decoder key. This function will take a list of fields keys,
+  a dependency list, and produce a tuple of all valid specs and a
+  sequence of decoder functions"
+  [keys deps]
+  (let [dep-map (into {} deps)
+        specs (remove nil? (map :spec (vals dep-map)))
+        decoder-deps (map #(or (get-in dep-map [% :decoder]) (constantly nil))
+                          keys)]
+    [(map s/form specs)
+     decoder-deps]))
 
-(defn tuple [& codecs]
-  (let [symbolic-specs (map (fn [c] (s/form c)) codecs)]
-    (codify (s/spec* `(s/tuple ~@symbolic-specs))
-            (fn [_ data] (sequence-encoder codecs data))
-            (fn [_ bin] (sequence-decoder codecs bin {} (repeat identity)))
-            :alignment (apply max (map alignment codecs))
+(defn tuple 
+  [& {:keys [fields deps]}]
+  (let [[spec-deps decoder-deps] (process-deps (range (count fields)) deps)
+        symbolic-specs (map (fn [c] (s/form c)) fields)
+        spec-form (if (some? spec-deps)
+                    `(s/and (s/tuple ~@symbolic-specs)
+                            ~@spec-deps)
+                    `(s/and (s/tuple ~@symbolic-specs)))]
+    (codify (s/spec* spec-form)
+            (fn [_ data] (sequence-encoder fields data))
+            (fn [_ bin] (sequence-decoder fields bin {} (repeat identity) decoder-deps))
+            :alignment (apply max (map alignment fields))
             :fixed-size (reduce (fn [a v] (if (nil? v)
                                             (reduced nil)
                                             (+ a v)))
                                 0
-                                (map sizeof codecs)))))
+                                (map sizeof fields)))))
   
 (defn- convert-field [field]
   (if (keyword? field)
@@ -425,16 +449,22 @@
     {:key field :res (keyword (name field)) :un true}
     (assoc :res (keyword (name (:key field))))))
 
-(defn struct [& fields]
+(defn struct 
+  [& {:keys [fields deps]}]
   (let [resolved-fields (map convert-field fields)
         req-un (map :key (filter :un resolved-fields))
         req (map :key (filter (complement :un) resolved-fields))
         codecs (map :key resolved-fields)
         result-keys (map :res resolved-fields)
-        applicators (map #(fn [data] [% data]) result-keys)]
-    (codify (s/spec* `(s/keys :req [~@req] :req-un [~@req-un]))
+        [spec-deps decoder-deps] (process-deps result-keys deps)
+        applicators (map #(fn [data] [% data]) result-keys)
+        spec-form (if (some? spec-deps)
+                    `(s/and (s/keys :req [~@req] :req-un [~@req-un])
+                            ~@spec-deps)
+                    `(s/keys :req [~@req] :req-un [~@req-un])) ]
+    (codify (s/spec* spec-form)
             (fn [_ data] (sequence-encoder codecs (map #(get data %) result-keys)))
-            (fn [_ bin] (sequence-decoder codecs bin {} applicators))
+            (fn [_ bin] (sequence-decoder codecs bin {} applicators decoder-deps))
             :alignment (apply max (map alignment codecs))
             :fixed-size (reduce (fn [a v] (if (nil? v)
                                             (reduced nil)
@@ -473,8 +503,40 @@
                                 0
                                 (map sizeof (vals field-map))))))
 
+(defn get-mm-sizeof-fn [mm]
+  (fn [_]
+    (reduce (fn [a v]
+              (if-let [size (sizeof (v nil))]
+                (max a size)
+                (reduced nil)))
+            0
+            (vals (methods mm)))))
 
-(defn multicodec [])
+(defn get-mm-alignment-fn [mm]
+  (fn [_]
+    (reduce (fn [a v] (max a (alignment (v nil))))
+            0
+            (vals (methods mm)))))
+
+(s/def ::bType ::uint8)
+(s/def ::bLength ::uint8)
+(s/def ::foo (tuple :fields [::int16 ::int32]))
+(s/def ::bar (align (array ::int8 :count 5) 4))
+(s/def ::st-foo (struct :fields [::bLength ::bType ::foo]))
+(s/def ::st-bar (struct :fields [::bLength ::bType ::bar]))
+
+(defmulti open-st ::bType)
+
+(defmethod open-st 1 [_] ::st-foo)
+(defmethod open-st 2 [_] ::st-bar)
+
+
+(defmacro multi-codec 
+  ([mm retag] `(binify (s/multi-spec ~mm ~retag)
+                       (get-mm-sizeof-fn ~mm)
+                       (get-mm-alignment-fn ~mm)))
+  ([mm retag decoder-tag] 2))
+
 (defn cat [])
 (defn alt [])
 (defn * [])
