@@ -352,7 +352,7 @@
 (defn sequence-encoder [codec-seq data]
   (map encode codec-seq data))
 
-(defn sequence-decoder [codec-seq bin pred-map data-applicators decoder-deps]
+(defn sequence-decoder [codec-seq bin pred-map data-applicators init decoder-deps]
   (let [{:encode-binary.core/keys [bytes count until-value while-bytes]
          :or {bytes nil count nil 
               until-value (constantly false) while-bytes (constantly true)}} pred-map
@@ -370,7 +370,7 @@
                                        (if (until-value new-data)
                                          (reduced result)
                                          result))))
-                                 [[] bin-to-decode]
+                                 [init bin-to-decode]
                                  (map vector cs data-applicators decoder-deps))
         ;; The remaining data will be either from the forced split, or from 
         remaining-final (or remaining-forced remaining)]
@@ -392,14 +392,14 @@
     (if (some? count)
       (codify spec
               (fn [_ data] (sequence-encoder (repeat count codec) data))
-              (fn [_ bin] (sequence-decoder (repeat count codec) bin {} (repeat identity) (repeat (constantly nil))))
+              (fn [_ bin] (sequence-decoder (repeat count codec) bin {} (repeat identity) [] (repeat (constantly nil))))
               :alignment array-alignment
               :fixed-size (if-let [elem-size (sizeof codec)]
                             (* (+ elem-size (alignment-padding array-alignment elem-size)) count)
                             nil))
       (codify spec
               (fn [_ data] (sequence-encoder (repeat codec) data))
-              (fn [this bin] (sequence-decoder (repeat codec) bin (meta this) (repeat identity) (repeat (constantly nil))))
+              (fn [this bin] (sequence-decoder (repeat codec) bin (meta this) (repeat identity) [] (repeat (constantly nil))))
               :alignment array-alignment
               :dynamic-size (if-let [elem-size (sizeof codec)]
                               (fn [this] (if-let [dynamic-count (::count (meta this))]
@@ -431,7 +431,7 @@
                     `(s/and (s/tuple ~@symbolic-specs)))]
     (codify (s/spec* spec-form)
             (fn [_ data] (sequence-encoder fields data))
-            (fn [_ bin] (sequence-decoder fields bin {} (repeat identity) decoder-deps))
+            (fn [_ bin] (sequence-decoder fields bin {} (repeat identity) [] decoder-deps))
             :alignment (apply max (map alignment fields))
             :fixed-size (reduce (fn [a [size align-to]] 
                                   (if (nil? size)
@@ -465,7 +465,7 @@
                     `(s/keys :req [~@req] :req-un [~@req-un])) ]
     (codify (s/spec* spec-form)
             (fn [_ data] (sequence-encoder codecs (map #(get data %) result-keys)))
-            (fn [_ bin] (sequence-decoder codecs bin {} applicators decoder-deps))
+            (fn [_ bin] (sequence-decoder codecs bin {} applicators {} decoder-deps))
             :alignment (apply max (map alignment codecs))
             :fixed-size (reduce (fn [a [size align-to]]
                                   (if (nil? size)

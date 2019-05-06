@@ -456,6 +456,10 @@
       )
     (testing "explicit"
       (testing "union"
+        (is (= {::bLength 10 ::bType 2 ::tup [1 2]} 
+               (first (e/decode ::union [10 2 1 0 2 0 0 0] {::e/decoder-tag ::st-tup}))))
+        (is (= {::bLength 10 ::bType 1 ::arr [1 2 3 4 5]} 
+               (first (e/decode ::union [10 1 0 0 1 2 3 4 5] {::e/decoder-tag ::st-arr}))))
         )
       (testing "multi-codec"
         )
