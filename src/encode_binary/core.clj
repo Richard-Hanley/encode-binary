@@ -524,16 +524,15 @@
   [mm enc-tag]
   (if (some? enc-tag)
    (fn [_ data]
-     (encode* ((get-method mm (enc-tag data)) nil) data))
+     (encode ((get-method mm (enc-tag data)) nil) data))
    (fn [_ data]
-     (encode* ((mm data) nil) data))))
+     (encode (mm data) data))))
 
 (defmacro multi-codec 
   [mm retag & {:keys [encoder-tag decoder-tag]}] 
   `(binify (codify (s/multi-spec ~mm ~retag) (get-mm-enc-fn ~mm ~encoder-tag) nil)
            (get-mm-sizeof-fn ~mm)
            (get-mm-alignment-fn ~mm)))
-; ([mm retag decoder-tag] 2))
 
 (defn cat [])
 (defn alt [])

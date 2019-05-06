@@ -443,8 +443,10 @@
       (is (= [10 1 0 0 1 2 3 4 5]
              (e/flatten (e/encode ::union [::st-arr {::bLength 10 ::bType 1 ::arr [1 2 3 4 5]}])))))
     (testing "multi-codec"
-      )
-    )
+      (is (= [10 1 1 0 2 0 0 0] 
+             (e/flatten (e/encode ::open-union {::bLength 10 ::bType 1 ::tup [1 2]}))))
+      (is (= [10 2 0 0 1 2 3 4 5]
+             (e/flatten (e/encode ::open-union {::bLength 10 ::bType 2 ::arr [1 2 3 4 5]}))))))
   (testing "decoding"
     (testing "implicit"
       (testing "union"
