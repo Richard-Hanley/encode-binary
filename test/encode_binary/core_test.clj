@@ -46,7 +46,7 @@
 (s/def :aligned-wide/float (e/floating-primitive Float :word-size 8))
 (s/def :aligned-wide/double (e/floating-primitive Double :word-size 8))
 
-(testing "primitive specs"
+(deftest primitive-specs
   (testing "signed"
     (testing "zero checking"
       (is (= 0 (s/conform :little/int8 0)))
@@ -108,7 +108,7 @@
       (is (s/invalid? (s/conform :little/int32 1.02)))
       (is (s/invalid? (s/conform :little/int64 1.02))))))
 
-(testing "primitive codec alignment"
+(deftest primitive-codec-alignment
   (testing "codec alignment"
     (testing "little endian"
       (is (= 1 (e/alignment :little/int8)))
@@ -190,7 +190,7 @@
     
     
 
-(testing "primitive codec binary"
+(deftest primitive-codec-binary
   (let [byte-test {:value 0x17 :little (map unchecked-byte [0x17]) :big (map unchecked-byte [0x17])} 
         short-test {:value 0x1234 :little (map unchecked-byte [0x34 0x12]) :big (map unchecked-byte [0x12 0x34])}
         int-test {:value (unchecked-int 0xDEADBEEF)
@@ -233,9 +233,10 @@
 
 (s/def ::foo ::e/int16)
 (s/def ::bar ::foo)
-(testing "nested codecs"
-  (is (= [12 0] (e/encode ::foo 12)))
-  (is (= [12 0] (e/encode ::bar 12))))
+(deftest nested-codecs
+  (testing "nested"
+    (is (= [12 0] (e/encode ::foo 12)))
+    (is (= [12 0] (e/encode ::bar 12)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Composite types
@@ -245,7 +246,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;Testing Binary collection building and flattening
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-(testing "make binary"
+(deftest make-binary
   (testing "alignment of made binary"
     (is (= 1 (e/alignment (e/make-binary [1 2 3]))))
     (is (= 1 (e/alignment (e/make-binary [1 2 3] :alignment 1))))
@@ -257,7 +258,7 @@
     (is (= [:foo] (e/binary-coll-key-order (e/make-binary {:foo 1 ::bar 2 :baz 3} :key-order [:foo]))))
     (is (= [::bar :baz :foo] (e/binary-coll-key-order (e/make-binary {:foo 1 ::bar 2 :baz 3} :key-order [::bar :baz :foo]))))))
 
-(testing "flatten"
+(deftest flatten
   (testing "sequential"
     (testing "no alignment"
       (let [bin [(e/encode ::e/uint8 17) (e/encode ::e/uint32 101) (e/encode ::e/uint16 25)]]
@@ -295,7 +296,7 @@
     (is (= [1 1 0 0 0 0 0 0] (e/flatten (e/make-binary (e/encode ::e/uint16 0x101) :padding 8))))))
 
 
-(testing "array codecs"
+(deftest arrays
   (testing "alignment"
     (is (= 1 (e/alignment (e/array ::e/uint16))))
     (is (= 4 (e/alignment (e/array (e/align ::e/uint16 4)))))
@@ -318,7 +319,7 @@
       (testing "unbounded"
         (is (= [1 2 3 4] (first (e/decode arr-unbd [1 0 2 0 3 0 4 0]))))))))
 
-(testing "tuple codecs"
+(deftest tuples 
   (testing "conformance"
     (is (= [5 -1] (s/conform (e/tuple :fields [::e/uint8 ::e/int16]) [5 -1])))
     (is (= (s/invalid? (s/conform (e/tuple :fields [::e/uint8 ::e/int16]) [257 -1]))))
@@ -373,3 +374,49 @@
   ;          (second (e/decode ::dep-struct [8 2 -1 2 0 3 1 1 0 0 0 0 0]))))))
   )
   
+
+(s/def ::bType ::e/uint8)
+(s/def ::bLength ::e/uint8)
+(s/def ::tup (e/tuple :fields [::e/int16 ::e/int32]))
+(s/def ::arr (e/align (e/array ::e/int8 :count 5) 4))
+(s/def ::st-tup (e/struct :fields [::bLength ::bType ::tup]))
+(s/def ::st-arr (e/struct :fields [::bLength ::bType ::arr]))
+
+(s/def ::union (e/union :fields [::st-tup ::st-arr]))
+; (s/def ::tagged-union (e/uinion :fields [::st-tup ::st-arry]))
+
+(defmulti open-union ::bType)
+
+(defmethod open-union 1 [_] ::st-tup)
+(defmethod open-union 2 [_] ::st-arr)
+
+(s/def ::open-union (e/multi-codec open-union ::bType))
+; (s/def ::tagged-open-union (e/multi-codec open-union ::bType))
+
+(deftest unions
+  (testing "conformance"
+    (testing "union"
+      (is (= [::st-tup {::bLength 10 ::bType 2 ::tup [1 2]}]
+             (s/conform ::union {::bLength 10 ::bType 2 ::tup [1 2]})))
+      (is (= ::s/invalid
+             (s/conform ::union {::bLength 256 ::bType 2 ::tup [1 2]})))
+      (is (= [::st-arr {::bLength 10 ::bType 1 ::arr [1 2 3 4 5]}]
+             (s/conform ::union {::bLength 10 ::bType 1 ::arr [1 2 3 4 5]})))
+      (is (= ::s/invalid
+             (s/conform ::union {::bLength 10 ::bType 1 ::arr [1 2 3]}))))
+    (testing "multi-codec"
+      (is (= {::bLength 10 ::bType 1 ::tup [1 2]}
+             (s/conform ::open-union {::bLength 10 ::bType 1 ::tup [1 2]})))
+      (is (= ::s/invalid
+             (s/conform ::open-union {::bLength 256 ::bType 1 ::tup [1 2]})))
+      (is (= ::s/invalid
+             (s/conform ::open-union {::bLength 256 ::bType 2 ::tup [1 2]})))
+      (is (= {::bLength 10 ::bType 2 ::arr [1 2 3 4 5]}
+             (s/conform ::open-union {::bLength 10 ::bType 2 ::arr [1 2 3 4 5]})))
+      (is (= ::s/invalid
+             (s/conform ::open-union {::bLength 10 ::bType 2 ::arr [1 2 3]})))
+      (is (= ::s/invalid
+             (s/conform ::open-union {::bLength 10 ::bType 1 ::arr [1 2 3 4 5]}))))
+    )
+
+  )
