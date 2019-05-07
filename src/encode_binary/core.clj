@@ -52,11 +52,10 @@
   (or (::index (meta binary-coll)) 0))
 
 (defn split-binary [size bin]
-  (let [[bin rem] (split-at size bin)]
-    [bin (if (some? rem)
-           (with-meta rem
-                    (update (meta bin) ::index (fnil + 0) size)))]))
-  
+  (let [[new-bin rem] (split-at size bin)]
+    [new-bin (with-meta rem
+                    (update (meta bin) ::index (fnil + 0) size))]))
+
 (defprotocol BinaryCollection
   (flatten [this]))
 
@@ -68,8 +67,6 @@
                    (update ::key-order replace-arg key-order)
                    (update ::alignment replace-arg alignment)
                    (update ::padding replace-arg padding)))))
-
-                   ; {::key-order key-order ::alignment alignment}))
 
 (defn binary-coll-alignment [bin]
   (or (get (meta bin) ::alignment) 1))
@@ -90,7 +87,7 @@
   (let [bytes-off (alignment-padding align-to 
                                      (current-index binary-coll))]
     (with-meta (drop bytes-off binary-coll)
-               (update (meta binary-coll) ::index (fnil #(+ bytes-off %) 0)))))
+               (update (meta binary-coll) ::index (fnil #(+ bytes-off %) bytes-off)))))
 
 (defn add-padding [pad-to coll]
   (if (some? pad-to)
@@ -186,7 +183,7 @@
   ([codec binary-seq metadata]
    (let [c (specize codec)]
      (decode* (meta-merge c metadata)
-              (trim-to-alignment (alignment* c) binary-seq)))))
+              (trim-to-alignment (alignment* (meta-merge c metadata)) binary-seq)))))
 
 (defn binify [x size-fn align-fn]
   (with-meta x
