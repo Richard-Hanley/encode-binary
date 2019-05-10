@@ -540,23 +540,16 @@
            (get-mm-sizeof-fn ~mm)
            (get-mm-alignment-fn ~mm)))
 
+(defn get-mm-dispatch [mm]
+  (. mm dispatchFn))
+
 (defmacro symbolic-method 
   [multifn k v c]
-  (let [dispatch-fn `(. ~(with-meta multifn {:tag 'clojure.lang.MultiFn}) ~'dispatchFn)
-        the-codec `(specify (constant-field :encode-binary.core-test/bType ~v) ~c)]
-    `(do
-       (let [keyed-spec# (constant-field ~dispatch-fn ~v)
-             the-codec# (specify keyed-spec# ~c)]
-         (println "Oh wow here - " ~the-codec)
-         (defmethod ~multifn ~k [ignore#] ~the-codec))
-         ; (defmethod ~multifn ~k [ignore#] the-codec#))
+  (let [const-spec `(constant-field (get-mm-dispatch ~multifn) ~v)]
+     `(do
+       (defmethod ~multifn ~k [ignore#] (with-meta (s/and ~const-spec ~c)
+                                                   (meta (specize ~c))))
        (defmethod ~multifn ~v [ignore#] ~c))))
-
-  ; (. ~(with-meta multifn {:tag 'clojure.lang.MultiFn}) addMethod ~v (fn [ignore#] ~c))
-; (. ~(with-meta multifn {:tag 'clojure.lang.MultiFn}) addMethod ~k  keyed-dispatch#))))
-
-  ; `(do
-
 
 
 (defn cat [])
