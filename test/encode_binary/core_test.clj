@@ -391,16 +391,22 @@
 (s/def ::st-tup (e/struct :fields [::bLength ::bType ::tup]))
 (s/def ::st-arr (e/struct :fields [::bLength ::bType ::arr]))
 
+(def union-tags {1 ::st-arr 2 ::st-tup })
+
+(defn test-decoder-tag [binary-seq]
+  (get union-tags (second binary-seq)))
+
 (s/def ::union (e/union :fields [::st-tup ::st-arr]))
-; (s/def ::tagged-union (e/uinion :fields [::st-tup ::st-arry]))
+(s/def ::tagged-union (e/union :fields [::st-tup ::st-arr] :decoder-tag test-decoder-tag))
 
 (defmulti open-union ::bType)
 
-(defmethod open-union 1 [_] ::st-tup)
-(defmethod open-union 2 [_] ::st-arr)
 
 (s/def ::open-union (e/multi-codec open-union ::bType))
-; (s/def ::tagged-open-union (e/multi-codec open-union ::bType))
+(s/def ::open-tagged-union (e/multi-codec open-union ::bType :decoder-tag test-decoder-tag))
+
+(e/symbolic-method open-union :tuple 1 ::st-tup)
+(e/symbolic-method open-union :array 2 ::st-arr)
 
 (deftest unions
   (testing "conformance"
@@ -446,12 +452,25 @@
       (is (= [10 1 1 0 2 0 0 0] 
              (e/flatten (e/encode ::open-union {::bLength 10 ::bType 1 ::tup [1 2]}))))
       (is (= [10 2 0 0 1 2 3 4 5]
-             (e/flatten (e/encode ::open-union {::bLength 10 ::bType 2 ::arr [1 2 3 4 5]}))))))
+             (e/flatten (e/encode ::open-union {::bLength 10 ::bType 2 ::arr [1 2 3 4 5]})))))
+    (testing "multi-codec symbolic dispatch"
+      (is (= [10 1 1 0 2 0 0 0] 
+             (e/flatten (e/encode ::open-union (s/conform ::open-union {::bLength 10 ::bType :tuple ::tup [1 2]})))))
+      (is (= [10 2 0 0 1 2 3 4 5]
+             (e/flatten (e/encode ::open-union (s/conform ::open-union {::bLength 10 ::bType :array ::arr [1 2 3 4 5]}))))))
+    (testing "mutli-codec-explicit encoder"
+      (let [explicit-open-union (e/multi-codec open-union ::bType :encoder-tag :bType)]
+        (is (= [10 1 1 0 2 0 0 0] 
+               (e/flatten (e/encode ::open-union {::bLength 10 ::bType 1 ::tup [1 2]}))))
+        (is (= [10 2 0 0 1 2 3 4 5]
+               (e/flatten (e/encode ::open-union {::bLength 10 ::bType 2 ::arr [1 2 3 4 5]})))))))
   (testing "decoding"
     (testing "implicit"
       (testing "union"
-        )
-      (testing "multi-codec"
+        (is (= {::bLength 10 ::bType 2 ::tup [1 2]} 
+               (first (e/decode ::tagged-union [10 2 1 0 2 0 0 0] {::e/decoder-tag ::st-tup}))))
+        (is (= {::bLength 10 ::bType 1 ::arr [1 2 3 4 5]} 
+               (first (e/decode ::tagged-union [10 1 0 0 1 2 3 4 5] {::e/decoder-tag ::st-arr}))))
         )
       )
     (testing "explicit"
@@ -462,6 +481,10 @@
                (first (e/decode ::union [10 1 0 0 1 2 3 4 5] {::e/decoder-tag ::st-arr}))))
         )
       (testing "multi-codec"
+        (is (= {::bLength 10 ::bType 2 ::tup [1 2]} 
+               (first (e/decode ::open-union [10 2 1 0 2 0 0 0] {::e/decoder-tag  1}))))
+        (is (= {::bLength 10 ::bType 1 ::arr [1 2 3 4 5]} 
+               (first (e/decode ::open-union [10 1 0 0 1 2 3 4 5] {::e/decoder-tag 2}))))
         )
     )
   )

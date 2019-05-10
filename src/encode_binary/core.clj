@@ -525,11 +525,39 @@
    (fn [_ data]
      (encode (mm data) data))))
 
+(defn get-mm-dec-fn
+  [mm dec-tag]
+  (if (some? dec-tag)
+    (fn [_ bin]
+      (decode ((get-method mm (dec-tag bin)) nil) bin))
+    (fn [this bin]
+      (decode ((get-method mm (::decoder-tag (meta this))) nil) bin))))
+
+
 (defmacro multi-codec 
   [mm retag & {:keys [encoder-tag decoder-tag]}] 
-  `(binify (codify (s/multi-spec ~mm ~retag) (get-mm-enc-fn ~mm ~encoder-tag) nil)
+  `(binify (codify (s/multi-spec ~mm ~retag) (get-mm-enc-fn ~mm ~encoder-tag) (get-mm-dec-fn ~mm ~decoder-tag))
            (get-mm-sizeof-fn ~mm)
            (get-mm-alignment-fn ~mm)))
+
+(defmacro symbolic-method 
+  [multifn k v c]
+  (let [dispatch-fn `(. ~(with-meta multifn {:tag 'clojure.lang.MultiFn}) ~'dispatchFn)
+        the-codec `(specify (constant-field :encode-binary.core-test/bType ~v) ~c)]
+    `(do
+       (let [keyed-spec# (constant-field ~dispatch-fn ~v)
+             the-codec# (specify keyed-spec# ~c)]
+         (println "Oh wow here - " ~the-codec)
+         (defmethod ~multifn ~k [ignore#] ~the-codec))
+         ; (defmethod ~multifn ~k [ignore#] the-codec#))
+       (defmethod ~multifn ~v [ignore#] ~c))))
+
+  ; (. ~(with-meta multifn {:tag 'clojure.lang.MultiFn}) addMethod ~v (fn [ignore#] ~c))
+; (. ~(with-meta multifn {:tag 'clojure.lang.MultiFn}) addMethod ~k  keyed-dispatch#))))
+
+  ; `(do
+
+
 
 (defn cat [])
 (defn alt [])
