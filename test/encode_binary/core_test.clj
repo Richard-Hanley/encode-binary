@@ -339,18 +339,17 @@
     (testing "decoding"
       (is (= [1 2 3] (first (e/decode simple-tup [1 2 0 0 0 3 0]))))))
   (testing "dependent tuple"
-    (let [dep-tup (e/specify (e/tuple :fields [::e/uint8 (e/array ::e/uint16)])
-                             (e/dependent-field 0 #(count (second %))))]
+    (let [dep-tup (e/tuple :fields [::e/uint8 (e/array ::e/uint16)]
+                           :deps [(e/count-dependency 0 1)])]
       (testing "conformance"
         (is (= [0 []] (s/conform dep-tup [0 []])))
         (is (= [2 [5 6]] (s/conform dep-tup [0 [5 6]])))
         (is (= [3 [5 6 7]] (s/conform dep-tup [0 [5 6 7]]))))
       (testing "encoding"
         (is (= [2 5 0 6 0] (e/flatten (e/encode dep-tup [2 [5 6]])))))
-      ; (testing "decoding"
-      ;   (is (= [2 [5 6]] (first (e/decode dep-tup [2 5 0 6 0 7 0 8 0]))))
-      ;   (is (= [7 0 8 0] (second (e/decode dep-tup [2 5 0 6 0 7 0 8 0]))))))))
-      )))
+      (testing "decoding"
+        (is (= [2 [5 6]] (first (e/decode dep-tup [2 5 0 6 0 7 0 8 0]))))
+        (is (= [7 0 8 0] (second (e/decode dep-tup [2 5 0 6 0 7 0 8 0]))))))))
 
 
 (s/def ::bLength ::e/uint8)
@@ -360,11 +359,11 @@
                                           (e/unqualified ::bCount)
                                           ::arrData]))
 
-(s/def ::dep-struct (e/specify (e/struct :fields [::bLength
-                                                  (e/unqualified ::bCount)
-                                                  ::arrData])
-                               (e/dependent-field ::bLength #(e/sizeof (e/encode ::dep-struct %)))
-                               (e/dependent-field :bCount #(count (::arrData %)))))
+(s/def ::dep-struct (e/struct :fields [::bLength
+                                       (e/unqualified ::bCount)
+                                       ::arrData]
+                              :deps [(e/size-dependency ::dep-struct ::bLength)
+                                     (e/count-dependency :bCount ::arrData)]))
 
 (testing "struct codecs"
   (testing "simple conformance"
@@ -375,13 +374,12 @@
            (s/conform ::dep-struct {::bLength 0 :bCount 0 ::arrData [[-1 2] [3 257]]}))))
   (testing "encoding"
     (is (= [8 2 -1 2 0 3 1 1]
-           (e/flatten (e/encode ::dep-struct {::bLength 8 :bCount 2 ::arrData [[-1 2] [3 257]]})))))
-  ; (testing "decoding"
-  ;   (is (= {::bLength 8 :bCount 2 ::arrData [[-1 2] [3 257]]}
-  ;          (first (e/decode ::dep-struct [8 2 -1 2 0 3 1 1 0 0 0 0 0]))))
-  ;   (is (= [0 0 0 0 0]
-  ;          (second (e/decode ::dep-struct [8 2 -1 2 0 3 1 1 0 0 0 0 0]))))))
-  )
+           (e/flatten (e/encode ::dep-struct {::bLength 8 :bCount 2 ::arrData [[-1 2] [3 257]]}))))
+  (testing "decoding"
+    (is (= {::bLength 8 :bCount 2 ::arrData [[-1 2] [3 257]]}
+           (first (e/decode ::dep-struct [8 2 -1 2 0 3 1 1 0 0 0 0 0]))))
+    (is (= [0 0 0 0 0]
+           (second (e/decode ::dep-struct [8 2 -1 2 0 3 1 1 0 0 0 0 0])))))))
   
 
 (s/def ::bType ::e/uint8)

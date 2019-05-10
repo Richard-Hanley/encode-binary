@@ -405,6 +405,44 @@
                               (constantly nil)))
       )))
 
+(defmacro dependency 
+  "A dependency is made up of an encoder and decoder dependnecy
+  It is possible to define only an encoder or only a decoder.
+
+  All encoder dependencies are specs that will be applied during conformance.
+
+  Decoder dependencies are a tuple of key to be specified followed by a function
+  that takes an accumulated data and passed metadata to the codec."
+  [& {:keys [encoder decoder]}]
+  (if (some? decoder)
+    `[(first ~decoder) {:spec ~encoder :decoder (second ~decoder)}]
+    `[(gensym) {:spec ~encoder :decoder nil}]))
+
+(defmacro size-dependency
+  "Takes a codec and a field, and produces a dependency.  The field will be dependent
+  on the size of the conformed codec.
+
+  If an keyword argument is supplied, then the resulting dependency will be of a particular
+  value in the conformed codec.  On top of that, the keyword argument will also have the
+  bytes metadata configured when decoding"
+  ([codec field] `(dependency :encoder (dependent-field ~field #(sizeof (encode ~codec %)))))
+  ([codec field arg] `(dependency :encoder (dependent-field ~field #(sizeof (encode ~codec (get % ~arg))))
+                                  :decoder [~arg (fn [accum# metadata#]
+                                                   {::bytes (get accum# ~field)})])))
+(defmacro count-dependency
+  "Creates a field that is dependent on the count of the argument key that is passed.
+  When encoding there will be a spec forcing the field to the count of arg. On the flip
+  side, when decoding arg will be passed the value of field as a decoder dependency"
+  [field arg] `(dependency :encoder (dependent-field ~field #(count (get % ~arg)))
+                           :decoder [~arg (fn [accum# metadata#]
+                                            {::count (get accum# ~field)})]))
+
+(defmacro tag
+  "Creates a dependency that will set the decoder tag based on the given function and a list
+  of arguments.  The arguments are expected to be keys that can be gotten from accumulated data."
+  [field f & args] `(dependency :decoder [~field (fn [accum# metadata#]
+                                                   {::decoder-tag (apply f (map #(get accum# %) args))})]))
+
 (defn process-deps 
   "A dependency list is a tuple of keys and maps that have a :spec
   and a :decoder key. This function will take a list of fields keys,
@@ -425,7 +463,7 @@
         spec-form (if (some? spec-deps)
                     `(s/and (s/tuple ~@symbolic-specs)
                             ~@spec-deps)
-                    `(s/and (s/tuple ~@symbolic-specs)))]
+                    `(s/tuple ~@symbolic-specs))]
     (codify (s/spec* spec-form)
             (fn [_ data] (sequence-encoder fields data))
             (fn [_ bin] (sequence-decoder fields bin {} (repeat identity) [] decoder-deps))
@@ -447,11 +485,16 @@
     {:key field :res (keyword (name field)) :un true}
     (assoc :res (keyword (name (:key field))))))
 
+(defn auto [field]
+  (if (keyword? field)
+    {:key field :res field :auto true}
+    (assoc field :auto true)))
+
 (defn struct 
   [& {:keys [fields deps]}]
   (let [resolved-fields (map convert-field fields)
-        req-un (map :key (filter :un resolved-fields))
-        req (map :key (filter (complement :un) resolved-fields))
+        req-un (map :key (filter #(and (:un %) (not (:auto %))) resolved-fields))
+        req (map :key (filter #(and (not (:un %)) (not (:auto %))) resolved-fields))
         codecs (map :key resolved-fields)
         result-keys (map :res resolved-fields)
         [spec-deps decoder-deps] (process-deps result-keys deps)
