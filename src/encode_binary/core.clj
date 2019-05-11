@@ -223,7 +223,7 @@
           :alignment align-to
           :fixed-size (sizeof codec)))
 
-(defn pad [codec pad-to]
+(defn fixed-size [codec pad-to]
   (codify codec
           (fn [_ data] (make-binary (encode codec data) :padding pad-to))
           (fn [_ bin] (let [[bin-to-decode rem] (split-binary pad-to)
@@ -321,7 +321,7 @@
              :fixed-size ~size)))
 
 (defmacro floating-primitive [prim & {:keys [word-size order]
-                             :or {word-size 1}}]
+                                      :or {word-size 1}}]
   (let [size `(. ~prim ~'BYTES)
         alignment `(min ~size ~word-size)
         min-value `(. ~prim ~'MIN_VALUE)
@@ -344,6 +344,69 @@
 
 (s/def ::float (floating-primitive Float))
 (s/def ::double (floating-primitive Double))
+
+(def standard-charsets {:iso-8859-1 {:charset (constantly StandardCharsets/ISO_8859_1) :size 1}
+                        :ascii {:charset (constantly StandardCharsets/US_ASCII) :size 1}
+                        :utf-8 {:charset (constantly StandardCharsets/UTF_8) :size 1}
+                        :utf-16 {:charset (fn [order]
+                                            (if (#{ByteOrder/LITTLE_ENDIAN} (get order-map order default-order))
+                                              StandardCharsets/UTF_16LE
+                                              StandardCharsets/UTF_16BE))
+                                 :size 2}
+
+                        :utf-16-bom {:charset (constantly StandardCharsets/UTF_16) :size 2} }) 
+
+(defn- string-params
+  "Builds a tuple of charset, character size, and alignment"
+  [encoding word-size char-size order]
+  (let [charset-map (if (keyword? encoding)
+                      (get standard-charsets encoding)
+                      {:charset (constantly encoding) :size char-size})
+        [charset actual-char-size] [((:charset charset-map) order)
+                                    (:size charset-map)]
+        align-to (min word-size actual-char-size)]
+    [charset actual-char-size align-to]))
+
+(defn- string-to-bytes [data charset align-to]
+  (make-binary (seq (.getBytes data charset))
+               :alignment align-to))
+
+(defn- string-from-bytes [bin charset]
+  (String. (byte-array bin) charset))
+
+(defn string 
+  [encoding & {:keys [word-size char-size order]
+               :or {word-size 1 char-size 1}}]
+  (let [[charset actual-char-size align-to] (string-params encoding word-size char-size order)]
+        (codify (s/spec string?)
+                (fn [_ data] (string-to-bytes data charset align-to))
+                (fn [this bin] 
+                  (let [fixed-bytes (::bytes (meta this))
+                        [bin-to-convert rem] (if (some? fixed-bytes)
+                                               (split-binary fixed-bytes bin)
+                                               [bin (list)])]
+                    [(string-from-bytes bin-to-convert charset) rem]))
+                :alignment align-to)))
+
+(defn null-terminated-string 
+  [encoding & {:keys [word-size char-size order]
+               :or {word-size 1 char-size 1}}]
+  (let [[charset actual-char-size align-to] (string-params encoding word-size char-size order)]
+        (codify (s/spec string?)
+                (fn [_ data] (string-to-bytes (str data "\0") charset align-to))
+                (fn [_ bin]
+                  (let [null-terminator (repeat actual-char-size (byte 0))
+                        byte-size (+ actual-char-size
+                                     (* actual-char-size (count (take-while #(not= null-terminator %)
+                                                                            (partition actual-char-size bin)))))
+                        [bin-to-convert rem] (split-binary byte-size bin)]
+                    [(.trim (string-from-bytes bin-to-convert charset)) rem]))
+                :alignment align-to)))
+
+              
+(s/def ::ascii (string :ascii))
+(s/def ::utf-8 (string :utf-8))
+(s/def ::utf-16 (string :utf-16))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Composite Types
@@ -641,51 +704,6 @@
 
 (defn & [codec & preds])
 (defn &= [codec count])
-  ; (let [sentinel-fn (cond
-  ;                     (set? sentinel) sentinel
-  ;                     (nil? sentinel) nil
-  ;                     :else #{sentinel})
-  ;       decoding-args (into {} (remove (comp nil? val) {::bytes bytes ::while-bytes while ::sentinel sentinel-fn}))
-  ;       codec-form (s/form codec)]
-  ;   ))
 
 (defn nest [codec])
-
-
-; (defn array
-;   [codec & {:keys [count sentinel while bytes]}]
-;   (let array-alignment (alignment codec)
-;         fixed-size-per-element (if-let [elem-size (sizeof codec)]
-;                                  (* (+ elem-size (alignment-padding array-alignment elem-size)) (or count 0))
-;                                  nil)
-;         codec-form (s/form codec)
-;         coll-spec `(s/coll-of ~codec-form
-;                                   :into []
-;                                   :kind ~kind
-;                                   :count ~count
-;                                   :max-count ~max-count
-;                                   :min-count ~min-count
-;                                   :distinct ~distinct
-;                                   :gen-max ~gen-max
-;                                   :gen ~gen)
-;         spec (if (some? sentinel-fn)
-;                (s/spec* `(s/and ~coll-spec (append-sentinel (first ~sentinel-fn))))
-;                (s/spec* coll-spec))]
-;     (if (some? count)
-;       (codify spec
-;               (fn [_ data] (sequence-encoder (repeat count codec) data))
-;               (fn [_ bin] (sequence-decoder (repeat count codec) bin {} (repeat identity) [] (repeat (constantly nil))))
-;               :alignment array-alignment
-;               :fixed-size fixed-size-per-element)
-;       (codify spec
-;               (fn [_ data] (sequence-encoder (repeat codec) data))
-;               (fn [this bin] (sequence-decoder (repeat codec) bin (merge (meta this) decoding-args) (repeat identity) [] (repeat (constantly nil))))
-;               :alignment array-alignment
-;               :fixed-size bytes
-;               :dynamic-size (if-let [elem-size (sizeof codec)]
-;                               (fn [this] (if-let [dynamic-count (::count (meta this))]
-;                                            (* (+ elem-size (alignment-padding array-alignment elem-size)) dynamic-count)
-;                                    nil))
-;                               (constantly nil)))
-;       )))
 

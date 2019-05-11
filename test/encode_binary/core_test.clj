@@ -238,6 +238,69 @@
     (is (= [12 0] (e/encode ::foo 12)))
     (is (= [12 0] (e/encode ::bar 12)))))
 
+(deftest strings
+  (testing "utf-8"
+    (let [str-codec (e/string :utf-8)]
+      (testing "conformance"
+        (is (= ::s/invalid (s/conform str-codec 123)))
+        (is (= "Hello" (s/conform str-codec "Hello"))))
+      (testing "encoding"
+        (is (= [72 101 108 108 111] (e/encode str-codec "Hello"))))
+      (testing "decoding"
+        (is (= "Hello" (first (e/decode str-codec (map byte [72 101 108 108 111]))))))
+    ))
+  (testing "utf-16 little endian"
+    (let [str-codec (e/string :utf-16)]
+      (testing "conformance"
+        (is (= ::s/invalid (s/conform str-codec 123)))
+        (is (= "Hello" (s/conform str-codec "Hello"))))
+      (testing "encoding"
+        (is (= [72 0 101 0 108 0 108 0 111 0] (e/encode str-codec "Hello"))))
+      (testing "decoding"
+        (is (= "Hello" (first (e/decode str-codec (map byte [72 0 101 0 108 0 108 0 111 0]))))))
+    ))
+  (testing "utf-16 big endian"
+    (let [str-codec (e/string :utf-16 :order :big)]
+      (testing "conformance"
+        (is (= ::s/invalid (s/conform str-codec 123)))
+        (is (= "Hello" (s/conform str-codec "Hello"))))
+      (testing "encoding"
+        (is (= [0 72 0 101 0 108 0 108 0 111] (e/encode str-codec "Hello"))))
+      (testing "decoding"
+        (is (= "Hello" (first (e/decode str-codec (map byte [0 72 0 101 0 108 0 108 0 111]))))))
+    ))
+  (testing "utf-8 null terminated"
+    (let [str-codec (e/null-terminated-string :utf-8)]
+      (testing "conformance"
+        (is (= ::s/invalid (s/conform str-codec 123)))
+        (is (= "Hello" (s/conform str-codec "Hello"))))
+      (testing "encoding"
+        (is (= [72 101 108 108 111 0] (e/encode str-codec "Hello"))))
+      (testing "decoding"
+        (testing "extra bytes left over"
+          (is (= "Hello" (first (e/decode str-codec (map byte [72 101 108 108 111 0 1 2 3])))))
+          (is (= [1 2 3] (second (e/decode str-codec (map byte [72 101 108 108 111 0 1 2 3]))))))
+        (testing "no bytes and no null terminator"
+          (is (= "Hello" (first (e/decode str-codec (map byte [72 101 108 108 111])))))
+          (is (empty? (second (e/decode str-codec (map byte [72 101 108 108 111])))))))
+    ))
+  (testing "utf-16 null terminated"
+    (let [str-codec (e/null-terminated-string :utf-16)]
+      (testing "conformance"
+        (is (= ::s/invalid (s/conform str-codec 123)))
+        (is (= "Hello" (s/conform str-codec "Hello"))))
+      (testing "encoding"
+        (is (= [72 0 101 0 108 0 108 0 111 0 0 0] (e/encode str-codec "Hello"))))
+      (testing "decoding"
+        (testing "extra bytes left over"
+          (is (= "Hello" (first (e/decode str-codec (map byte [72 0 101 0 108 0 108 0 111 0 0 0 1 2 3])))))
+          (is (= [1 2 3] (second (e/decode str-codec (map byte [72 0 101 0 108 0 108 0 111 0 0 0 1 2 3]))))))
+        (testing "no bytes and no null terminator"
+          (is (= "Hello" (first (e/decode str-codec (map byte [72 0 101 0 108 0 108 0 111 0])))))
+          (is (empty? (second (e/decode str-codec (map byte [72 0 101 0 108 0 108 0 111 0])))))))
+    ))
+  )
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Composite types
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -500,4 +563,7 @@
         )
     )
   )
+  )
+
+(deftest sequence-codecs
   )
