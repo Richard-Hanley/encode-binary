@@ -323,7 +323,21 @@
         (is (= [1 0 2 0 3 0 4 0] (e/flatten (e/encode arr-unbd [1 2 3 4])))))
     (testing "decoding to a binary structure"
       (testing "unbounded"
-        (is (= [1 2 3 4] (first (e/decode arr-unbd [1 0 2 0 3 0 4 0]))))))))
+        (is (= [1 2 3 4] (first (e/decode arr-unbd [1 0 2 0 3 0 4 0])))))))
+  (testing "variable length decoding"
+    (let [sentinel-arr (e/array ::e/uint16 :sentinel #{0xDEAD})
+          while-positive-arr (e/array ::e/uint16 :while (fn [bin] (pos? (first (e/decode ::e/int16 bin)))))
+          fixed-size-arr (e/array ::e/uint16 :bytes 10)]
+      (testing "sentinel"
+        (is (= [[1 2 3 4 5] [6 7 8 9]]
+               (e/decode sentinel-arr (map unchecked-byte [1 0 2 0 3 0 4 0 5 0 0xAD 0xDE 6 7 8 9])))))
+      (testing "until negative value"
+        (is (= [[1 2 3 4 5] [-1 -1 6 7 8 9]]
+               (e/decode while-positive-arr (map unchecked-byte [1 0 2 0 3 0 4 0 5 0 -1 -1 6 7 8 9])))))
+      (testing "until negative value"
+        (is (= [[1 2 3 4 5] [6 7 8 9]]
+               (e/decode fixed-size-arr (map unchecked-byte [1 0 2 0 3 0 4 0 5 0 6 7 8 9])))))
+      )))
 
 (deftest tuples 
   (testing "conformance"

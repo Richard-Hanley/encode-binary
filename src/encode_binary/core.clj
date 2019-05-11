@@ -250,6 +250,9 @@
 (s/defop dependent-field [field f]
   (s/conformer #(assoc % field (f %))))
 
+(s/defop append-sentinel [value]
+  (s/conformer #(conj % value)))
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;Defining Primitive Codecs
@@ -350,9 +353,9 @@
   (map encode codec-seq data))
 
 (defn sequence-decoder [codec-seq bin pred-map data-applicators init decoder-deps]
-  (let [{:encode-binary.core/keys [bytes count until-value while-bytes]
+  (let [{:encode-binary.core/keys [bytes count sentinel while-bytes]
          :or {bytes nil count nil 
-              until-value (constantly false) while-bytes (constantly true)}} pred-map
+              sentinel (constantly false) while-bytes (constantly true)}} pred-map
         [bin-to-decode remaining-forced] (if (some? bytes)
                                            (split-binary bytes bin)
                                            [bin nil])
@@ -364,8 +367,8 @@
                                      (reduced [accum rem-so-far])
                                      (let [[new-data new-rem] (decode c rem-so-far (dep accum pred-map))
                                            result [(conj accum (applicator new-data)) new-rem]]
-                                       (if (until-value new-data)
-                                         (reduced result)
+                                       (if (sentinel new-data)
+                                         (reduced [accum new-rem])
                                          result))))
                                  [init bin-to-decode]
                                  (map vector cs data-applicators decoder-deps))
@@ -374,10 +377,18 @@
     [data remaining-final]))
 
 (defn array
-  [codec & {:keys [align kind count max-count min-count distinct gen-max gen]}]
-  (let [array-alignment (alignment codec)
+  [codec & {:keys [align kind count max-count min-count distinct gen-max gen sentinel while bytes]}]
+  (let [sentinel-fn (cond
+                      (set? sentinel) sentinel
+                      (nil? sentinel) nil
+                      :else #{sentinel})
+        decoding-args (into {} (remove (comp nil? val) {::bytes bytes ::while-bytes while ::sentinel sentinel-fn}))
+        array-alignment (alignment codec)
+        fixed-size-per-element (if-let [elem-size (sizeof codec)]
+                                 (* (+ elem-size (alignment-padding array-alignment elem-size)) (or count 0))
+                                 nil)
         codec-form (s/form codec)
-        spec (s/spec* `(s/coll-of ~codec-form
+        coll-spec `(s/coll-of ~codec-form
                                   :into []
                                   :kind ~kind
                                   :count ~count
@@ -385,19 +396,21 @@
                                   :min-count ~min-count
                                   :distinct ~distinct
                                   :gen-max ~gen-max
-                                  :gen ~gen))]
+                                  :gen ~gen)
+        spec (if (some? sentinel-fn)
+               (s/spec* `(s/and ~coll-spec (append-sentinel (first ~sentinel-fn))))
+               (s/spec* coll-spec))]
     (if (some? count)
       (codify spec
               (fn [_ data] (sequence-encoder (repeat count codec) data))
               (fn [_ bin] (sequence-decoder (repeat count codec) bin {} (repeat identity) [] (repeat (constantly nil))))
               :alignment array-alignment
-              :fixed-size (if-let [elem-size (sizeof codec)]
-                            (* (+ elem-size (alignment-padding array-alignment elem-size)) count)
-                            nil))
+              :fixed-size fixed-size-per-element)
       (codify spec
               (fn [_ data] (sequence-encoder (repeat codec) data))
-              (fn [this bin] (sequence-decoder (repeat codec) bin (meta this) (repeat identity) [] (repeat (constantly nil))))
+              (fn [this bin] (sequence-decoder (repeat codec) bin (merge (meta this) decoding-args) (repeat identity) [] (repeat (constantly nil))))
               :alignment array-alignment
+              :fixed-size bytes
               :dynamic-size (if-let [elem-size (sizeof codec)]
                               (fn [this] (if-let [dynamic-count (::count (meta this))]
                                            (* (+ elem-size (alignment-padding array-alignment elem-size)) dynamic-count)
@@ -597,8 +610,8 @@
 
 (defn cat [])
 (defn alt [])
-(defn * [])
-(defn + [])
-(defn ? [])
-(defn & [])
-(defn nest [])
+(defn * [codec])
+(defn + [codec])
+(defn ? [codec])
+(defn & [codec & preds])
+(defn nest [codec])
