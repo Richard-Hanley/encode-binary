@@ -239,6 +239,9 @@
             (fn [_ bin] (decode codec bin pred-map))
             :alignment (alignment codec )
            :fixed-size (sizeof codec pred-map))))
+
+(defn merge-op [codec & ops]
+  (apply comp (map #(partial % codec) ops)))
  
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Common specs that can be used in codec definitions
@@ -671,7 +674,30 @@
        (defmethod ~multifn ~v [ignore#] ~c))))
 
 
-(defn cat [])
+(defn cat
+  [& {:keys [fields deps]}]
+  (let [name-form-pairs (apply concat (map (fn [[n c]] [n (s/form c)]) (partition 2 fields)))
+        field-map (apply array-map fields)
+        [spec-deps decoder-deps] (process-deps (keys field-map) deps)
+        applicators (map #(fn [data] [% data]) (keys field-map))
+        spec-form (if (some? spec-deps)
+                    `(s/and (s/cat ~@name-form-pairs)
+                            ~@spec-deps)
+                    `(s/cat ~@name-form-pairs))]
+    (codify (s/spec* spec-form)
+            (fn [_ data] (sequence-encoder (vals field-map) (map #(get data %) (keys field-map))))
+            (fn [_ bin] (sequence-decoder (vals field-map) bin {} (repeat identity) [] decoder-deps))
+            :alignment (apply max (map alignment (vals field-map)))
+            :fixed-size (reduce (fn [a [size align-to]]
+                                  (if (nil? size)
+                                    (reduced nil)
+                                    (+ a size (alignment-padding align-to a))))
+                                0
+                                (map #(vector (sizeof %) (alignment %)) (vals field-map))))))
+
+
+
+
 (defn alt [])
 
 (defn sequence-codec-impl [spec codec sentinel while bytes]
@@ -702,8 +728,10 @@
   `(sequence-codec-impl (s/? ~codec) ~codec ~sentinel ~while ~bytes))
 
 
-(defn & [codec & preds])
-(defn &= [codec count])
+(defn & [codec & preds]
+  (let [spec-form (s/form codec)]
+  (with-meta (s/spec* `(s/& ~spec-form ~@preds))
+             (meta codec))))
 
 (defn nest [codec])
 
