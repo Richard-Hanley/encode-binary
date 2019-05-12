@@ -211,7 +211,7 @@
   using s/and on each of the passed specs"
   [& specs-and-codecs]
   (let [codec (first (filter codec? (map specize specs-and-codecs)))
-        specs (map s/form specs-and-codecs)]
+        specs (map #(if (keyword? %) % (s/form %)) specs-and-codecs)]
     (with-meta (s/spec* `(s/and ~@specs))
                (meta codec))))
 
